@@ -6,6 +6,19 @@ import Icon from '@/components/ui/icon';
 
 type Difficulty = 'easy' | 'normal' | 'hard';
 type GameState = 'menu' | 'playing' | 'gameover' | 'victory';
+type WeaponType = 'pistol' | 'rifle' | 'knife';
+
+interface Weapon {
+  type: WeaponType;
+  name: string;
+  damage: number;
+  fireRate: number;
+  ammoCapacity: number;
+  reloadTime: number;
+  range: number;
+  spread: number;
+  icon: string;
+}
 
 interface Enemy {
   id: number;
@@ -32,6 +45,7 @@ const Index = () => {
   const [difficulty, setDifficulty] = useState<Difficulty>('normal');
   const [playerHealth, setPlayerHealth] = useState(100);
   const [ammo, setAmmo] = useState(30);
+  const [currentWeapon, setCurrentWeapon] = useState<WeaponType>('pistol');
   const [score, setScore] = useState(0);
   const [wave, setWave] = useState(1);
   const [enemies, setEnemies] = useState<Enemy[]>([]);
@@ -40,6 +54,43 @@ const Index = () => {
   const canvasRef = useRef<HTMLDivElement>(null);
   const bulletIdRef = useRef(0);
   const enemyIdRef = useRef(0);
+  const lastShotTime = useRef(0);
+
+  const weapons: Record<WeaponType, Weapon> = {
+    pistol: {
+      type: 'pistol',
+      name: 'Пистолет',
+      damage: 50,
+      fireRate: 500,
+      ammoCapacity: 12,
+      reloadTime: 1500,
+      range: 400,
+      spread: 0.05,
+      icon: 'Crosshair'
+    },
+    rifle: {
+      type: 'rifle',
+      name: 'Автомат',
+      damage: 35,
+      fireRate: 150,
+      ammoCapacity: 30,
+      reloadTime: 2500,
+      range: 600,
+      spread: 0.12,
+      icon: 'Target'
+    },
+    knife: {
+      type: 'knife',
+      name: 'Нож',
+      damage: 100,
+      fireRate: 300,
+      ammoCapacity: 999,
+      reloadTime: 0,
+      range: 100,
+      spread: 0,
+      icon: 'Sword'
+    }
+  };
 
   const difficultySettings = {
     easy: { enemyHealth: 50, enemySpeed: 1, enemyDamage: 5, enemiesPerWave: 3 },
@@ -51,7 +102,8 @@ const Index = () => {
     setDifficulty(diff);
     setGameState('playing');
     setPlayerHealth(100);
-    setAmmo(30);
+    setCurrentWeapon('pistol');
+    setAmmo(weapons.pistol.ammoCapacity);
     setScore(0);
     setWave(1);
     setEnemies([]);
@@ -81,19 +133,54 @@ const Index = () => {
   };
 
   const shoot = (targetX: number, targetY: number) => {
-    if (ammo <= 0 || isReloading) return;
+    const weapon = weapons[currentWeapon];
+    const now = Date.now();
+    
+    if (now - lastShotTime.current < weapon.fireRate) return;
+    if (weapon.type !== 'knife' && (ammo <= 0 || isReloading)) return;
+
+    lastShotTime.current = now;
 
     const centerX = 400;
     const centerY = 500;
     const angle = Math.atan2(targetY - centerY, targetX - centerX);
-    const spread = (Math.random() - 0.5) * 0.1;
+    const dist = Math.sqrt(Math.pow(targetX - centerX, 2) + Math.pow(targetY - centerY, 2));
+
+    if (weapon.type === 'knife') {
+      if (dist > weapon.range) return;
+      
+      setEnemies(prev => {
+        return prev.map(enemy => {
+          const enemyDist = Math.sqrt(
+            Math.pow(enemy.x - centerX, 2) + Math.pow(enemy.y - centerY, 2)
+          );
+          
+          const enemyAngle = Math.atan2(enemy.y - centerY, enemy.x - centerX);
+          const angleDiff = Math.abs(angle - enemyAngle);
+          
+          if (enemyDist < weapon.range && angleDiff < 0.5) {
+            const newHealth = enemy.health - weapon.damage;
+            if (newHealth <= 0) {
+              setScore(s => s + 150);
+              return { ...enemy, health: 0 };
+            }
+            return { ...enemy, health: newHealth };
+          }
+          return enemy;
+        }).filter(e => e.health > 0);
+      });
+      return;
+    }
+
+    const spread = (Math.random() - 0.5) * weapon.spread;
+    const bulletSpeed = weapon.type === 'rifle' ? 12 : 10;
 
     setBullets(prev => [...prev, {
       id: bulletIdRef.current++,
       x: centerX,
       y: centerY,
-      vx: Math.cos(angle + spread) * 10,
-      vy: Math.sin(angle + spread) * 10,
+      vx: Math.cos(angle + spread) * bulletSpeed,
+      vy: Math.sin(angle + spread) * bulletSpeed,
       isPlayer: true
     }]);
 
@@ -101,12 +188,19 @@ const Index = () => {
   };
 
   const reload = () => {
-    if (isReloading) return;
+    const weapon = weapons[currentWeapon];
+    if (isReloading || weapon.type === 'knife' || ammo === weapon.ammoCapacity) return;
     setIsReloading(true);
     setTimeout(() => {
-      setAmmo(30);
+      setAmmo(weapon.ammoCapacity);
       setIsReloading(false);
-    }, 2000);
+    }, weapon.reloadTime);
+  };
+
+  const switchWeapon = (weaponType: WeaponType) => {
+    if (isReloading) return;
+    setCurrentWeapon(weaponType);
+    setAmmo(weapons[weaponType].ammoCapacity);
   };
 
   useEffect(() => {
@@ -186,7 +280,8 @@ const Index = () => {
                   Math.pow(bullet.x - enemy.x, 2) + Math.pow(bullet.y - enemy.y, 2)
                 );
                 if (dist < 30) {
-                  const newHealth = enemy.health - 50;
+                  const weapon = weapons[currentWeapon];
+                  const newHealth = enemy.health - weapon.damage;
                   if (newHealth <= 0) {
                     setScore(s => s + 100);
                     remainingBullets.splice(remainingBullets.indexOf(bullet), 1);
