@@ -7,6 +7,26 @@ import Icon from '@/components/ui/icon';
 type Difficulty = 'easy' | 'normal' | 'hard';
 type GameState = 'menu' | 'playing' | 'gameover' | 'victory';
 type WeaponType = 'pistol' | 'rifle' | 'knife';
+type OutfitType = 'soldier' | 'medic' | 'sniper';
+
+interface Outfit {
+  type: OutfitType;
+  name: string;
+  color: string;
+  healthBonus: number;
+  speedBonus: number;
+  damageBonus: number;
+}
+
+interface Ally {
+  id: number;
+  x: number;
+  y: number;
+  health: number;
+  maxHealth: number;
+  isDowned: boolean;
+  reviveProgress: number;
+}
 
 interface Weapon {
   type: WeaponType;
@@ -46,6 +66,11 @@ const Index = () => {
   const [playerHealth, setPlayerHealth] = useState(100);
   const [ammo, setAmmo] = useState(30);
   const [currentWeapon, setCurrentWeapon] = useState<WeaponType>('pistol');
+  const [currentOutfit, setCurrentOutfit] = useState<OutfitType>('soldier');
+  const [allies, setAllies] = useState<Ally[]>([]);
+  const [isReviving, setIsReviving] = useState(false);
+  const [revivingAllyId, setRevivingAllyId] = useState<number | null>(null);
+  const allyIdRef = useRef(0);
   const [score, setScore] = useState(0);
   const [wave, setWave] = useState(1);
   const [enemies, setEnemies] = useState<Enemy[]>([]);
@@ -55,6 +80,33 @@ const Index = () => {
   const bulletIdRef = useRef(0);
   const enemyIdRef = useRef(0);
   const lastShotTime = useRef(0);
+
+  const outfits: Record<OutfitType, Outfit> = {
+    soldier: {
+      type: 'soldier',
+      name: 'Солдат',
+      color: 'bg-green-700',
+      healthBonus: 0,
+      speedBonus: 0,
+      damageBonus: 0
+    },
+    medic: {
+      type: 'medic',
+      name: 'Медик',
+      color: 'bg-blue-600',
+      healthBonus: 50,
+      speedBonus: 0,
+      damageBonus: -10
+    },
+    sniper: {
+      type: 'sniper',
+      name: 'Снайпер',
+      color: 'bg-purple-700',
+      healthBonus: -20,
+      speedBonus: 0,
+      damageBonus: 30
+    }
+  };
 
   const weapons: Record<WeaponType, Weapon> = {
     pistol: {
@@ -101,14 +153,24 @@ const Index = () => {
   const startGame = (diff: Difficulty) => {
     setDifficulty(diff);
     setGameState('playing');
-    setPlayerHealth(100);
+    const baseHealth = 100 + outfits[currentOutfit].healthBonus;
+    setPlayerHealth(baseHealth);
     setCurrentWeapon('pistol');
     setAmmo(weapons.pistol.ammoCapacity);
     setScore(0);
     setWave(1);
     setEnemies([]);
     setBullets([]);
+    spawnAllies();
     spawnWave(1, diff);
+  };
+
+  const spawnAllies = () => {
+    const newAllies: Ally[] = [
+      { id: allyIdRef.current++, x: 350, y: 520, health: 100, maxHealth: 100, isDowned: false, reviveProgress: 0 },
+      { id: allyIdRef.current++, x: 450, y: 520, health: 100, maxHealth: 100, isDowned: false, reviveProgress: 0 }
+    ];
+    setAllies(newAllies);
   };
 
   const spawnWave = (waveNum: number, diff: Difficulty) => {
@@ -133,7 +195,10 @@ const Index = () => {
   };
 
   const shoot = (targetX: number, targetY: number) => {
+    if (isReviving) return;
+    
     const weapon = weapons[currentWeapon];
+    const damageMultiplier = 1 + (outfits[currentOutfit].damageBonus / 100);
     const now = Date.now();
     
     if (now - lastShotTime.current < weapon.fireRate) return;
@@ -159,7 +224,8 @@ const Index = () => {
           const angleDiff = Math.abs(angle - enemyAngle);
           
           if (enemyDist < weapon.range && angleDiff < 0.5) {
-            const newHealth = enemy.health - weapon.damage;
+            const finalDamage = Math.round(weapon.damage * damageMultiplier);
+            const newHealth = enemy.health - finalDamage;
             if (newHealth <= 0) {
               setScore(s => s + 150);
               return { ...enemy, health: 0 };
@@ -281,7 +347,9 @@ const Index = () => {
                 );
                 if (dist < 30) {
                   const weapon = weapons[currentWeapon];
-                  const newHealth = enemy.health - weapon.damage;
+                  const damageMultiplier = 1 + (outfits[currentOutfit].damageBonus / 100);
+                  const finalDamage = Math.round(weapon.damage * damageMultiplier);
+                  const newHealth = enemy.health - finalDamage;
                   if (newHealth <= 0) {
                     setScore(s => s + 100);
                     remainingBullets.splice(remainingBullets.indexOf(bullet), 1);
@@ -307,6 +375,25 @@ const Index = () => {
               });
               remainingBullets.splice(remainingBullets.indexOf(bullet), 1);
             }
+            
+            setAllies(prevAllies => {
+              return prevAllies.map(ally => {
+                if (ally.isDowned) return ally;
+                const distToAlly = Math.sqrt(
+                  Math.pow(bullet.x - ally.x, 2) + Math.pow(bullet.y - ally.y, 2)
+                );
+                if (distToAlly < 25) {
+                  const newHealth = ally.health - difficultySettings[difficulty].enemyDamage;
+                  if (newHealth <= 0) {
+                    remainingBullets.splice(remainingBullets.indexOf(bullet), 1);
+                    return { ...ally, health: 0, isDowned: true, reviveProgress: 0 };
+                  }
+                  remainingBullets.splice(remainingBullets.indexOf(bullet), 1);
+                  return { ...ally, health: newHealth };
+                }
+                return ally;
+              });
+            });
           }
         });
 
@@ -333,7 +420,47 @@ const Index = () => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    
+    const downedAlly = allies.find(ally => {
+      const dist = Math.sqrt(Math.pow(x - ally.x, 2) + Math.pow(y - ally.y, 2));
+      return ally.isDowned && dist < 50;
+    });
+    
+    if (downedAlly && currentOutfit === 'medic') {
+      startRevive(downedAlly.id);
+      return;
+    }
+    
     shoot(x, y);
+  };
+
+  const startRevive = (allyId: number) => {
+    if (isReviving) return;
+    setIsReviving(true);
+    setRevivingAllyId(allyId);
+    
+    const reviveInterval = setInterval(() => {
+      setAllies(prev => prev.map(ally => {
+        if (ally.id === allyId) {
+          const newProgress = Math.min(100, ally.reviveProgress + 10);
+          if (newProgress >= 100) {
+            clearInterval(reviveInterval);
+            setIsReviving(false);
+            setRevivingAllyId(null);
+            setScore(s => s + 200);
+            return { ...ally, isDowned: false, health: ally.maxHealth, reviveProgress: 0 };
+          }
+          return { ...ally, reviveProgress: newProgress };
+        }
+        return ally;
+      }));
+    }, 200);
+    
+    setTimeout(() => {
+      clearInterval(reviveInterval);
+      setIsReviving(false);
+      setRevivingAllyId(null);
+    }, 2000);
   };
 
   if (gameState === 'menu') {
@@ -349,6 +476,37 @@ const Index = () => {
             </div>
 
             <div className="space-y-4">
+              <h2 className="text-2xl font-semibold text-white mb-4">Выбери одежду</h2>
+              <div className="grid grid-cols-3 gap-3 mb-6">
+                <Button
+                  onClick={() => setCurrentOutfit('soldier')}
+                  variant={currentOutfit === 'soldier' ? 'default' : 'outline'}
+                  className={`h-20 flex-col ${currentOutfit === 'soldier' ? 'bg-green-700' : 'border-slate-600'}`}
+                >
+                  <Icon name="User" size={24} className="mb-1" />
+                  <span className="font-bold">Солдат</span>
+                  <span className="text-xs opacity-75">Баланс</span>
+                </Button>
+                <Button
+                  onClick={() => setCurrentOutfit('medic')}
+                  variant={currentOutfit === 'medic' ? 'default' : 'outline'}
+                  className={`h-20 flex-col ${currentOutfit === 'medic' ? 'bg-blue-600' : 'border-slate-600'}`}
+                >
+                  <Icon name="HeartPulse" size={24} className="mb-1" />
+                  <span className="font-bold">Медик</span>
+                  <span className="text-xs opacity-75">+50 HP</span>
+                </Button>
+                <Button
+                  onClick={() => setCurrentOutfit('sniper')}
+                  variant={currentOutfit === 'sniper' ? 'default' : 'outline'}
+                  className={`h-20 flex-col ${currentOutfit === 'sniper' ? 'bg-purple-700' : 'border-slate-600'}`}
+                >
+                  <Icon name="Scope" size={24} className="mb-1" />
+                  <span className="font-bold">Снайпер</span>
+                  <span className="text-xs opacity-75">+30% урон</span>
+                </Button>
+              </div>
+              
               <h2 className="text-2xl font-semibold text-white mb-4">Выбери сложность</h2>
               
               <Button
@@ -471,7 +629,84 @@ const Index = () => {
       <Card 
         ref={canvasRef}
         onClick={handleCanvasClick}
-        className="relative w-full max-w-4xl aspect-[4/3] bg-gradient-to-b from-slate-800 to-slate-700 border-slate-600 overflow-hidden cursor-crosshair"
+        className="relative w-full max-w-4xl aspect-[4/3] border-slate-600 overflow-hidden cursor-crosshair"
+        style={{
+          background: 'linear-gradient(to bottom, #1e293b 0%, #334155 30%, #475569 60%, #64748b 100%)',
+          backgroundImage: `
+            linear-gradient(to bottom, #1e293b 0%, #334155 30%, #475569 60%, #64748b 100%),
+            repeating-linear-gradient(90deg, transparent 0, transparent 40px, rgba(255,255,255,0.03) 40px, rgba(255,255,255,0.03) 80px),
+            repeating-linear-gradient(0deg, transparent 0, transparent 40px, rgba(255,255,255,0.03) 40px, rgba(255,255,255,0.03) 80px)
+          `
+        }}
+      >
+        {/* Airplane fuselage sections */}
+        <div className="absolute top-0 left-0 right-0 h-24 bg-slate-700/40 border-b-2 border-slate-500" style={{boxShadow: 'inset 0 -10px 20px rgba(0,0,0,0.3)'}} />
+        <div className="absolute top-24 left-10 right-10 h-12 bg-slate-600/30 rounded-t-full" />
+        <div className="absolute bottom-0 left-0 right-0 h-16 bg-slate-800/40 border-t-2 border-slate-600" style={{boxShadow: 'inset 0 10px 20px rgba(0,0,0,0.3)'}} />
+        
+        {/* Windows on sides */}
+        {[...Array(8)].map((_, i) => (
+          <div 
+            key={`window-${i}`}
+            className="absolute w-16 h-12 bg-sky-900/30 border border-slate-500 rounded-lg"
+            style={{
+              left: i < 4 ? '20px' : 'auto',
+              right: i >= 4 ? '20px' : 'auto',
+              top: `${100 + i % 4 * 80}px`,
+              boxShadow: 'inset 0 0 10px rgba(56, 189, 248, 0.2)'
+            }}
+          />
+        ))}
+        
+        {/* Cargo boxes */}
+        <div className="absolute top-40 left-1/4 w-16 h-16 bg-amber-900/50 border-2 border-amber-700" style={{transform: 'rotate(5deg)'}} />
+        <div className="absolute top-50 right-1/4 w-20 h-20 bg-amber-900/50 border-2 border-amber-700" style={{transform: 'rotate(-8deg)'}} />
+        
+        {/* Allies */}
+        {allies.map(ally => (
+          <div
+            key={ally.id}
+            className="absolute transition-all duration-100"
+            style={{
+              left: `${ally.x}px`,
+              top: `${ally.y}px`,
+              transform: 'translate(-50%, -50%)'
+            }}
+          >
+            <div className="relative">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 ${
+                ally.isDowned 
+                  ? 'bg-red-900 border-red-700 opacity-60' 
+                  : 'bg-green-600 border-green-400'
+              }`}>
+                <Icon name={ally.isDowned ? 'HeartCrack' : 'UserCheck'} size={20} className="text-white" />
+              </div>
+              {!ally.isDowned && (
+                <div className="absolute -top-2 left-1/2 transform -translate-x-1/2 w-10 h-1 bg-slate-900 rounded">
+                  <div 
+                    className="h-full bg-green-500 rounded transition-all"
+                    style={{ width: `${(ally.health / ally.maxHealth) * 100}%` }}
+                  />
+                </div>
+              )}
+              {ally.isDowned && currentOutfit === 'medic' && (
+                <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 whitespace-nowrap">
+                  <div className="text-xs text-yellow-400 bg-black/70 px-2 py-1 rounded animate-pulse">
+                    Возродить
+                  </div>
+                </div>
+              )}
+              {ally.isDowned && ally.reviveProgress > 0 && (
+                <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 w-12 h-1 bg-slate-900 rounded">
+                  <div 
+                    className="h-full bg-blue-500 rounded transition-all"
+                    style={{ width: `${ally.reviveProgress}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
       >
         {/* Enemies */}
         {enemies.map(enemy => (
@@ -522,7 +757,10 @@ const Index = () => {
           className="absolute bottom-4 left-1/2 transform -translate-x-1/2"
         >
           <div className="relative">
-            <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center border-2 border-blue-400">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${outfits[currentOutfit].color} ${
+              currentOutfit === 'soldier' ? 'border-green-400' :
+              currentOutfit === 'medic' ? 'border-blue-400' : 'border-purple-400'
+            }`}>
               <Icon name="User" size={24} className="text-white" />
             </div>
             <div className="absolute -top-1 -right-1 w-4 h-4 bg-orange-500 rounded-full flex items-center justify-center">
@@ -531,9 +769,16 @@ const Index = () => {
           </div>
         </div>
 
-        {/* Crosshair hint */}
-        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 text-white text-sm bg-black/50 px-3 py-1 rounded">
-          Кликай для стрельбы
+        {/* Hints */}
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 text-center space-y-1">
+          <div className="text-white text-sm bg-black/50 px-3 py-1 rounded">
+            {isReviving ? '⚕️ Возрождение...' : 'Кликай для стрельбы'}
+          </div>
+          {currentOutfit === 'medic' && allies.some(a => a.isDowned) && (
+            <div className="text-yellow-400 text-xs bg-black/70 px-2 py-1 rounded animate-pulse">
+              Кликни на раненого союзника для возрождения
+            </div>
+          )}
         </div>
       </Card>
 
