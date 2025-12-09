@@ -442,8 +442,12 @@ const Index = () => {
             </div>
             <div className="flex items-center gap-2">
               <Icon name="Crosshair" size={20} className="text-orange-500" />
-              <span className="font-bold">{ammo}/30</span>
+              <span className="font-bold">{currentWeapon === 'knife' ? '∞' : `${ammo}/${weapons[currentWeapon].ammoCapacity}`}</span>
               {isReloading && <span className="text-sm text-yellow-500 animate-pulse">(перезарядка...)</span>}
+            </div>
+            <div className="flex items-center gap-2 bg-slate-800 px-3 py-1 rounded">
+              <Icon name={weapons[currentWeapon].icon as any} size={20} className="text-blue-400" />
+              <span className="font-bold text-sm">{weapons[currentWeapon].name}</span>
             </div>
           </div>
           
@@ -533,15 +537,46 @@ const Index = () => {
         </div>
       </Card>
 
+      {/* Weapon Selection */}
+      <div className="mt-4 flex gap-3">
+        <Button
+          onClick={() => switchWeapon('pistol')}
+          variant={currentWeapon === 'pistol' ? 'default' : 'outline'}
+          className={`h-14 ${currentWeapon === 'pistol' ? 'bg-blue-600 hover:bg-blue-700' : 'border-slate-600'}`}
+        >
+          <Icon name="Crosshair" className="mr-2" size={20} />
+          Пистолет
+          <span className="ml-2 text-xs opacity-75">12 патронов</span>
+        </Button>
+        <Button
+          onClick={() => switchWeapon('rifle')}
+          variant={currentWeapon === 'rifle' ? 'default' : 'outline'}
+          className={`h-14 ${currentWeapon === 'rifle' ? 'bg-orange-600 hover:bg-orange-700' : 'border-slate-600'}`}
+        >
+          <Icon name="Target" className="mr-2" size={20} />
+          Автомат
+          <span className="ml-2 text-xs opacity-75">30 патронов</span>
+        </Button>
+        <Button
+          onClick={() => switchWeapon('knife')}
+          variant={currentWeapon === 'knife' ? 'default' : 'outline'}
+          className={`h-14 ${currentWeapon === 'knife' ? 'bg-red-600 hover:bg-red-700' : 'border-slate-600'}`}
+        >
+          <Icon name="Sword" className="mr-2" size={20} />
+          Нож
+          <span className="ml-2 text-xs opacity-75">ближний бой</span>
+        </Button>
+      </div>
+
       {/* Controls */}
-      <div className="mt-4 flex gap-4">
+      <div className="mt-3 flex gap-4">
         <Button 
           onClick={reload}
-          disabled={isReloading || ammo === 30}
+          disabled={isReloading || currentWeapon === 'knife' || ammo === weapons[currentWeapon].ammoCapacity}
           className="bg-slate-700 hover:bg-slate-600"
         >
           <Icon name="RotateCw" className="mr-2" />
-          Перезарядка (R)
+          Перезарядка
         </Button>
         <Button 
           onClick={() => setGameState('menu')}
